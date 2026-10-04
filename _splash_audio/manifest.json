@@ -1,0 +1,10 @@
+{
+  "note": "启动音白名单（相对本目录的文件名）。游戏原版「启动画面三种音频随机选一」，这里保留同样行为：每次启动随机取一条。logo-bgm-1/2/3.wav 为用户提供的三段 BGM（48kHz 立体声 PCM16 WAV）。",
+  "sample_rate": 48000,
+  "channels": 2,
+  "files": [
+    "logo-bgm-1.wav",
+    "logo-bgm-2.wav",
+    "logo-bgm-3.wav"
+  ]
+}

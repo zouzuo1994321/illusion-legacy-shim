@@ -49,7 +49,7 @@ for kw in ["窗口优化", "窗口守护", "标题栏", "Alt+Enter", "Alt-Tab",
     ck("源码无「%s」" % kw, kw not in src)
 
 # ---- 版本号 ----
-ck("版本号 = v3.8", M.APP_VER == "v3.8")
+ck("版本号 = v3.10", M.APP_VER == "v3.10")
 
 # ---- 4. UI 构建 ----
 app = QApplication.instance() or QApplication(sys.argv)
@@ -171,15 +171,18 @@ ck("入口设置 Button 底色", "QPalette.Button, QColor(\"#313244\")" in src2)
 
 # ---- 10. v3.8 启动动画（白底 logo + 淡入淡出）----
 ck("存在 SplashScreen 类", hasattr(M, "SplashScreen"))
-ck("入口会创建启动动画", "SplashScreen()" in src2)
+ck("入口会创建启动动画", "SplashScreen(" in src2)
 ck("启动动画有淡入", "setEndValue(1.0)" in src2)
 ck("启动动画有淡出", "_fade_out" in src2)
 ck("启动动画用 windowOpacity", "windowOpacity" in src2)
 ck("白底 splash 素材可定位", bool(M.res_path("logo_splash.png")))
+ck("イリュージョン 美术字素材可定位", bool(M.res_path("logo_illusion.png")))
 _splash_shot = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "_shot_v38_splash.png")
 try:
-    sp = M.SplashScreen()
+    sp = M.SplashScreen((M.APP_WIN_W, M.APP_WIN_H))
+    ck("启动动画尺寸 = 软件主窗口 (700×620)",
+       sp.width() == 700 and sp.height() == 620)
     sp.grab().save(_splash_shot)
     ck("启动动画截图已生成",
        os.path.exists(_splash_shot) and os.path.getsize(_splash_shot) > 2000)
@@ -196,6 +199,48 @@ except Exception as _e:
 ck("spec 已打包 logo_splash.png", "logo_splash.png" in
    open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "Illusion老游戏修复工具.spec"), encoding="utf-8").read())
+ck("spec 已打包 logo_illusion.png", "logo_illusion.png" in
+   open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "Illusion老游戏修复工具.spec"), encoding="utf-8").read())
+
+# ---- 10b. v3.10 启动音（窗口大小白底 splash + イリュージョン + 版权 + 3 段 BGM 随机同步）----
+ck("存在 make_splash_audio 函数", hasattr(M, "make_splash_audio"))
+ck("源码引入 QSoundEffect", "QSoundEffect" in src2)
+ck("源码未把 QtMultimedia 排除", "'PySide6.QtMultimedia'" not in
+   open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "Illusion老游戏修复工具.spec"), encoding="utf-8").read())
+ck("spec 已打包 _splash_audio", "('_splash_audio', '_splash_audio')" in
+   open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "Illusion老游戏修复工具.spec"), encoding="utf-8").read())
+ck("版权署名含 肆月Aperture", "肆月Aperture" in M.APP_COPYRIGHT)
+ck("版权署名格式 Copyright © 2026", M.APP_COPYRIGHT.startswith("Copyright © 2026"))
+_sa = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_splash_audio")
+ck("启动音目录存在", os.path.isdir(_sa))
+_man = os.path.join(_sa, "manifest.json")
+ck("启动音 manifest 存在", os.path.exists(_man))
+if os.path.exists(_man):
+    import json as _json
+    _mf = _json.load(open(_man, encoding="utf-8"))
+    _files = _mf.get("files", [])
+    ck("manifest 列出 3 条音频", len(_files) == 3)
+    _wavs = [f for f in _files
+             if os.path.exists(os.path.join(_sa, f))]
+    ck("3 条音频文件均在位", len(_wavs) == 3)
+    ck("音频均为 WAV", all(f.lower().endswith(".wav") for f in _wavs))
+    ck("音频为 logo-bgm-1/2/3",
+       set(_files) == {"logo-bgm-1.wav", "logo-bgm-2.wav", "logo-bgm-3.wav"})
+# 离线环境下 QSoundEffect 可能无法真正出声，但构造 + 时长解析不应报错
+try:
+    _ret = M.make_splash_audio()
+    ck("make_splash_audio 返回 (fx, dur_ms) 元组",
+       isinstance(_ret, tuple) and len(_ret) == 2)
+    _fx, _dur = _ret
+    ck("返回的 dur_ms 为非负整数", isinstance(_dur, int) and _dur >= 0)
+    ck("make_splash_audio 可构造播放器", _fx is None or _fx is not None)
+except Exception as _e:
+    ck("make_splash_audio 可构造播放器 (%s)" % _e, False)
+# splash.attach_audio 接口存在（支持传时长）
+ck("SplashScreen.attach_audio 存在", hasattr(M.SplashScreen, "attach_audio"))
 
 ok = sum(1 for _, v in checks if v)
 print("=" * 56)

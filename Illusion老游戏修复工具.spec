@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Illusion老游戏修复工具 v3.8"""
+"""PyInstaller spec for Illusion老游戏修复工具 v3.10"""
 
 block_cipher = None
 
@@ -12,9 +12,11 @@ a = Analysis(
         ('logo_big.png', '.'),
         ('logo.png', '.'),
         ('logo_splash.png', '.'),
+        ('logo_illusion.png', '.'),
         ('_plans.zip', '.'),
         ('_dx', '_dx'),
         ('_social', '_social'),
+        ('_splash_audio', '_splash_audio'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -23,7 +25,7 @@ a = Analysis(
     excludes=[
         'tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy',
         'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
-        'PySide6.Qt3DCore', 'PySide6.QtMultimedia', 'PySide6.QtQml',
+        'PySide6.Qt3DCore', 'PySide6.QtQml',
         'PySide6.QtQuick', 'PySide6.QtSql', 'PySide6.QtTest',
     ],
     win_no_prefer_redirects=False,

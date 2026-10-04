@@ -1,6 +1,6 @@
 # Illusion 老游戏兼容性修复工具
 
-![Version](https://img.shields.io/badge/version-v3.8-8a2be2?style=flat-square)
+![Version](https://img.shields.io/badge/version-v3.10-8a2be2?style=flat-square)
 
 
 
@@ -31,7 +31,7 @@
 - **渲染层修复**：内置两套翻译层（DXVK / dgVoodoo2），一键切换并**自动备份原 DLL**，随时回滚。
 - **兼容层修复**：一键写入 `XP SP3 兼容 + 管理员运行` 标志，解决「一操作就未响应」。
 - **运行库补齐**：内置离线 DirectX 9.0c 精简包与 DX6/7 老组件（`d3drm.dll` 等），免联网。
-- **启动动画**：白底 logo 启动画面，淡入 → 停留 → 淡出，全程无黑色控制台窗口。
+- **启动动画**：白底 logo 启动画面，**只覆盖软件窗口区域（700×620）**，淡入 → 停留 → 淡出；logo 下方带黑色「イリュージョン」美术字与「Copyright © 2026 肆月Aperture」版权行；并随机播放一段启动 BGM，与 logo 淡入淡出同步。
 - **联系作者**：版权信息可点，打开四平台联系方式窗口。
 
 ---
@@ -86,18 +86,34 @@
 | 提权   | `RUNASADMIN`            | 老引擎常需写游戏目录、读 HKLM 注册表                    |
 | 完整标志 | `~ WINXPSP3 RUNASADMIN` | 同时写 HKCU（必成功）与 HKLM（需管理员），并回读校验          |
 
-### 启动动画（v3.8）
+### 启动动画（v3.10：窗口大小白底 + イリュージョン + 版权 + 启动 BGM）
 
-双击 exe 后先看到一枚**白底 logo 启动画面**：淡入 320ms → 停留 900ms → 淡出 320ms，  
-随后主窗口出现。**全程没有黑色控制台窗口。**
+双击 exe 后先看到一枚**白底 logo 启动画面**：画布尺寸 = **软件主窗口大小（700×620）**，居中覆盖在  
+软件窗口区域（**不铺满整个屏幕**），纯白填充；淡入 320ms → 停留（≥ 音频时长）→ 淡出 320ms，随后  
+主窗口出现。**全程没有黑色控制台窗口。**
+
+logo 下方依次是黑色「イリュージョン」美术字（烘焙进 `logo_illusion.png` 的粗体片假名，保证任意环境  
+字形一致）与「Copyright © 2026 肆月Aperture」版权行；底部角落带版本号。同时随机播放一段启动 BGM，  
+与 logo **淡入同起、音频放完（或到达最小停留）后淡出同止**，保留游戏原版「启动画面三种音频随机选一」  
+的行为。
 
 | 项    | 说明                                                                                           |
 | ---- | -------------------------------------------------------------------------------------------- |
-| 白底合成 | 原始 logo 是**透明底 PNG**，直接交给 `QSplashScreen` 会**显黑底** —— 先 `alpha_composite` 到白底 RGB 再画         |
+| 窗口大小白底 | 画布尺寸 = `APP_WIN_W × APP_WIN_H`（700×620），纯白填充，**只覆盖软件窗口区域**；由 `run()` 居中到主屏、视觉上与主窗口对齐；logo 居中、缩放到画布高约 36% |
+| イリュージョン | logo 下方黑色粗体片假名，PIL 烘焙进 `logo_illusion.png`（YuGothB.ttc），不依赖运行时字体；无素材时回退到系统字体绘制 |
+| 版权行 | 画布底部「Copyright © 2026 肆月Aperture」（常量 `APP_COPYRIGHT`）                                  |
+| 启动 BGM | 从打包内 `_splash_audio/` 随机取一条 WAV（manifest.json 白名单 = `logo-bgm-1/2/3.wav`），`QSoundEffect` 播放，`setVolume(0.6)`；游戏原版三种启动音随机选一，这里同样每次随机一条 |
+| 音画同步 | `_wav_duration_ms()` 解析 WAV 头得到真实时长，`make_splash_audio()` 返回 `(fx, dur_ms)`；logo 淡入时 `audio.play()`、淡出时 `audio.stop()`，停留时长取 `max(最小停留, 音频时长) + 余韵`，二者同步 |
+| 白底合成 | 原始 logo 是**透明底 PNG**，直接交给 `QSplashScreen` 会**显黑底** —— 先画到白底 `QPixmap` 再交给 `QSplashScreen`       |
 | 淡入淡出 | 用 `QPropertyAnimation(self, b"windowOpacity")`，**不用** `QGraphicsOpacityEffect`（依赖事件循环时序，易失效） |
-| 无边框  | `FramelessWindowHint` 去系统标题栏                                                                 |
-| 居中   | `QApplication.primaryScreen().availableGeometry().center()`                                  |
+| 无边框  | `FramelessWindowHint` + `WindowStaysOnTopHint` 去系统标题栏并置顶；覆写 `showEvent` 强制应用显式几何，避免被 `QSplashScreen` 自动居中覆盖 |
 | 不抢焦点 | `QSplashScreen` 本身不进任务栏、不占 Alt-Tab                                                           |
+
+> **启动 BGM 来源说明**：v3.10 起打包的 3 段 `logo-bgm-1/2/3.wav`（48kHz 立体声 PCM16）为用户提供的  
+> 启动 BGM。若要**还原游戏原版标题画面那「三种随机启动 BGM」**（它们锁在 `os_00m/n/s.pp` 的私有容器里，  
+> ffmpeg 无法直接解封装），改用 **「启动游戏 + 录音」** 方式最省事：用 `_switcher_src/record_os2_audio.py`  
+> 拉起 `OS2cn.exe`、从系统回环设备（Stereo Mix / VB-Audio 虚拟声卡）录下启动音、`silenceremove` 自动裁静音，  
+> 跑 `--batch 3` 即可抓到 3 种随机变体并写回 `manifest.json`，重新打包 exe 即生效。详见该脚本头部说明。
 
 ### 去除「蓝灰色框体」（v3.7）
 
@@ -152,6 +168,8 @@
 
 | 版本       | 日期         | 类型            | 主要变更                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------- | ---------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **v3.10** | 2026-10-04 | 小版本 · 视觉与音频 | **启动画面改为「只盖软件窗口」+ 加「イリュージョン」美术字与版权行 + 换用 3 段 BGM**。① **窗口大小而非全屏**：`SplashScreen` 画布由「主屏分辨率铺满」回退为 **700×620（= 主窗口尺寸）**，由 `run()` 居中到主屏、`showEvent` 强制应用几何，使其恰好覆盖软件界面、不再盖住整屏。② **イリュージョン + 版权**：logo 下方用 PIL（YuGothB.ttc）烘焙黑色粗体片假名 `logo_illusion.png`（不依赖运行时字体），再补「Copyright © 2026 肆月Aperture」版权行。③ **换 BGM**：manifest 由 os2 提取片段改为用户提供的 `logo-bgm-1/2/3.wav`（48kHz 立体声）；新增 `_wav_duration_ms()` 解析 WAV 头得出真实时长，`make_splash_audio()` 返回 `(fx, dur_ms)`，`run()` 据此让 logo 淡出与音频时长同步（停留 = `max(最小停留, 音频时长) + 余韵`）。④ 打包 `datas` 新增 `logo_illusion.png`。冒烟回归 128 项全过（含窗口尺寸 / 白底 / 时长元组 / 三 BGM 在位）。 |
+| **v3.9** | 2026-10-04 | 小版本 · 新特性     | **启动动画全屏化 + 接入《波动少女2》启动音**。① **全屏白底**：`SplashScreen` 画布由 240×240 居中卡片升级为**主屏分辨率纯白铺满**，`FramelessWindowHint + WindowStaysOnTopHint` 置顶覆盖整个界面，logo 居中缩放到屏高约 28%、底部带版本号。② **启动音随机同步**：从打包内 `_splash_audio/`（manifest.json 白名单）随机取一段 WAV，用 `QSoundEffect` 播放（音量 0.6、单次），**淡入同起、淡出同止**，保留游戏原版「启动画面三种音频随机选一」行为；音频为从 OS2 的 `os_02.pp` 资源包提取并封装的 PCM16（44100Hz mono）。③ 打包 `excludes` 移除 `PySide6.QtMultimedia` 以启用 `QSoundEffect`，`datas` 新增 `_splash_audio`。冒烟回归扩至 120 项（含启动音构造 / manifest / 随机性）。 |
 | **v3.8** | 2026-10-04 | 小版本 · 新特性     | **新增启动动画 + 排查「启动游戏黑框一闪」**。① **启动动画**：`SplashScreen(QSplashScreen)`，白底 logo 240×240 画布，淡入 320ms → 停留 900ms → 淡出 320ms。⚠️ 原始 logo 是**透明底 PNG**，直接给 splash 会**显黑底**，必须先 `Image.alpha_composite` 合成到白底 RGB；淡入淡出用 `windowOpacity` + `QPropertyAnimation` 而非 `QGraphicsOpacityEffect`（后者依赖事件循环时序，易失效）。② **黑框排查**：查证「每次启动游戏闪个黑框」= **UAC 提权过渡窗 + DXVK 初始化黑窗**叠加，**非故障**；`ShellExecuteW(runas)` 每次重新提权产生过渡进程，`~ WINXPSP3 RUNASADMIN` 垫片（含 SACP）又建又销毁宿主窗口；已排除「游戏是控制台程序弹 cmd」（PE 子系统 = GUI）；日志全程 `info:` 无 `err:`，随后正常运行。 |
 | **v3.7** | 2026-10-04 | 小版本 · 视觉修复    | **去除字体下的「蓝灰色框体」**。① **标签栏选中项**：`QTabBar::tab:selected{background:#89b4fa}` 的亮蓝**实底方块**压住文字 → 改为**暗底 `#1e1e2e` + 蓝字 `#89b4fa` + 蓝描边**，非选中项轻微下沉制造错落。② **按钮圆角下透出系统浅灰底**：`_BASE` 只有 `border:none + border-radius`，Qt 原生风格的浅灰填充会从圆角边缘漏出 → 入口改 `app.setStyle("Fusion")` + 手工设置**暗色 `QPalette`**（Window `#1e1e2e` / Base `#181825` / Button `#313244`…），`_BASE` 加 `background-clip:padding`，`GROUP_QSS` 追加 `QGroupBox QLabel{background:transparent;border:none;}`。**关键结论**：圆角透灰块不能只靠 `border-radius`，必须应用级设调色板。      |
 | **v3.6** | 2026-10-04 | 小版本 · 版式与联系入口 | **「运行环境」分组上移 + 版权信息可点**。① 分组顺序改为 `程序位置 → 运行环境 → 当前方案 → 切换方案 → 兼容层修复`，与实际操作流程（先定位、再补运行库、后选方案）对齐。② 顶部 **Copyright 可点击**，打开「联系作者」窗口：GitHub / 哔哩哔哩 / 微博 / 邮箱四行，平台 logo + 名称 + 账号，**整行可点**唤起浏览器与系统邮件客户端（`os.startfile()`，`mailto:` 也走它）。四枚 logo 打包进 `_social\`，`res_path()` 增加二级查找。                                                                                                                                                                                                                                 |
@@ -180,13 +198,14 @@ Illusion老游戏修复工具/
 │   ├── logo.ico                  # 程序图标
 │   ├── logo.png / logo_big.png   # 界面 logo（透明底）
 │   ├── logo_splash.png           # 启动动画用白底 logo
+│   ├── _splash_audio/            # 启动 BGM（manifest.json 白名单 + logo-bgm-1/2/3.wav，48kHz 立体声）
 │   ├── _plans.zip                # 内置方案包（25 文件，压缩后约 9MB）
 │   ├── _social/                  # 联系方式平台 logo（github/bilibili/weibo/mail）
 │   ├── _dx/                      # 内置 DirectX 运行库
 │   │   ├── DirectX9/             # 精简版 DX9 安装程序（25 文件，27.7MB）
 │   │   └── DirectX6/d3drm.dll    # DX6/7 老组件
 │   ├── Illusion老游戏修复工具.spec # PyInstaller 打包配置
-│   ├── _smoke_v34.py             # 离屏冒烟回归（109 项）
+│   ├── _smoke_v34.py             # 离屏冒烟回归（120 项）
 │   ├── _历史脚本/                # 历史诊断 / 复现 / 验证脚本归档
 │   └── _历史截图/                # 历史 UI 截图归档
 └── docs/shots/                   # README 效果图
@@ -208,8 +227,8 @@ cd _switcher_src
 # 运行
 python main.py
 
-# 离屏冒烟回归（109 项：符号存在性 / 源码文本 / UI 构建 / 分组顺序 /
-#   日志弹窗 / 联系方式 / 去蓝灰框体 / 启动动画，退出码 0 = 通过）
+# 离屏冒烟回归（120 项：符号存在性 / 源码文本 / UI 构建 / 分组顺序 /
+#   日志弹窗 / 联系方式 / 去蓝灰框体 / 启动动画 / 启动音，退出码 0 = 通过）
 python _smoke_v34.py
 
 # 打包（生成 dist/Illusion老游戏修复工具.exe）

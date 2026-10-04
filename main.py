@@ -41,9 +41,11 @@ import ctypes
 import time
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve,
+    Qt, QTimer, QPropertyAnimation, QEasingCurve, QUrl, QFile, QRandomGenerator,
+    QRect,
 )
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPalette, QColor, QPainter
+from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QMessageBox, QSizePolicy, QFileDialog, QTabWidget,
@@ -51,8 +53,10 @@ from PySide6.QtWidgets import (
 )
 
 APP_TITLE = "Illusion 老游戏兼容性修复工具"
-APP_VER = "v3.8"
+APP_VER = "v3.10"
 APP_COPYRIGHT = "Copyright © 2026 肆月Aperture"
+# 主窗口默认尺寸：启动画面与主窗口共用，保证启动画面「只覆盖软件界面」且两者对齐
+APP_WIN_W, APP_WIN_H = 700, 620
 APP_LICENSE = "本软件为开源软件，未经授权禁止用于商业用途。"
 
 # 作者联系方式（(键, 显示名, 账号/地址, 跳转URL, logo文件名)）
@@ -1408,7 +1412,7 @@ class MainWindow(QWidget):
         super().__init__()
         self.root_dir = find_local_game_root()
         self.setWindowTitle("%s %s" % (APP_TITLE, APP_VER))
-        self.resize(700, 620)
+        self.resize(APP_WIN_W, APP_WIN_H)
         self.setMinimumSize(620, 520)
         icon = res_path("logo.ico") or res_path("logo.png")
         if icon:
@@ -1589,19 +1593,28 @@ class MainWindow(QWidget):
 
 
 class SplashScreen(QSplashScreen):
-    """启动动画：白底 logo + 标题，淡入 → 停留 → 淡出。
+    """启动动画：白底 logo（尺寸 = 软件主窗口，只覆盖软件界面）+ 淡入淡出 + 启动音同步。
 
-    用 QSplashScreen + QGraphicsOpacityEffect 太依赖事件循环时序，
-    这里直接用 windowOpacity 做淡入淡出，最稳。
+    - 画布尺寸 = 软件主窗口大小（700×620），**不铺满整屏**；由 `run()` 居中摆放，
+      与随后出现的主窗口同位置同大小，视觉上像"软件窗口自己启动"。
+    - logo 下方依次是黑色「イリュージョン」美术字（logo_illusion.png）+ 版权行。
+    - 淡入淡出用 windowOpacity（比 QGraphicsOpacityEffect 稳，不依赖事件循环时序）。
+    - 可挂启动音 + 时长：`attach_audio(player, dur_ms)`；淡入时播放，
+      音频放完（或到达最小停留时长）后淡出，二者同步。
     """
 
-    HOLD_MS = 900          # 完全显示后的停留时间
-    FADE_MS = 320          # 淡入 / 淡出各用多久
+    FADE_MS = 320           # 淡入 / 淡出各用多久
+    HOLD_MS = 900           # 无音频（或音频很短）时的最小停留
+    AUDIO_TAIL_MS = 250     # 音频放完后再多停一会儿才淡出
+    MAX_WAIT_MS = 7000      # 兜底：最多等这么久一定淡出
 
-    def __init__(self):
+    def __init__(self, size=None, geometry=None):
+        # 显式几何（屏幕坐标）：由 run() 传入，使启动画面恰好盖住软件窗口区域。
+        # 若未传入，则按 QSplashScreen 默认行为在主屏居中（与主窗口一致，仍可对齐）。
+        self._explicit_geom = geometry
+        # logo（白底画布上画，透明/白底素材都行）
         pm = None
-        for name in ("logo_splash.png", "logo_splash_160.png",
-                     "logo_big.png", "logo.png"):
+        for name in ("logo_splash.png", "logo_big.png", "logo.png"):
             p = res_path(name)
             if p:
                 pm = QPixmap(p)
@@ -1611,51 +1624,103 @@ class SplashScreen(QSplashScreen):
             pm = QPixmap(200, 200)
             pm.fill(QColor("#ffffff"))
 
-        # 统一缩放到 200×200 的画布，四周留白，白底
-        canvas = QPixmap(240, 240)
+        if size is not None:
+            sw, sh = int(size[0]), int(size[1])
+        else:
+            sw, sh = APP_WIN_W, APP_WIN_H
+        canvas = QPixmap(sw, sh)
         canvas.fill(QColor("#ffffff"))
-        scaled = pm.scaled(180, 180, Qt.KeepAspectRatio,
-                           Qt.SmoothTransformation)
         painter = QPainter(canvas)
-        painter.drawPixmap((240 - scaled.width()) // 2,
-                           (240 - scaled.height()) // 2 - 8, scaled)
-        # 底部版权文字
-        painter.setPen(QColor("#888888"))
-        f = QFont()
-        f.setPointSize(8)
-        painter.setFont(f)
-        painter.drawText(canvas.rect().adjusted(0, 0, 0, -8),
+
+        # 1) logo：高约 36% 画布高，水平居中、靠上
+        logo_size = max(120, int(sh * 0.36))
+        scaled = pm.scaled(logo_size, logo_size, Qt.KeepAspectRatio,
+                           Qt.SmoothTransformation)
+        logo_y = int(sh * 0.10)
+        painter.drawPixmap((sw - scaled.width()) // 2, logo_y, scaled)
+
+        # 2) 黑色「イリュージョン」
+        ill_y = logo_y + scaled.height() + int(sh * 0.02)
+        ill = QPixmap(res_path("logo_illusion.png") or "")
+        if not ill.isNull():
+            ill_s = ill.scaledToWidth(int(sw * 0.70), Qt.SmoothTransformation)
+            painter.drawPixmap((sw - ill_s.width()) // 2, ill_y, ill_s)
+            ill_bottom = ill_y + ill_s.height()
+        else:
+            # 兜底：用系统字体直接画（中文字体普遍含假名）
+            f = QFont()
+            f.setFamilies(["Yu Gothic", "Meiryo", "MS Gothic",
+                           "Microsoft YaHei", "SimHei"])
+            f.setPointSize(max(18, int(sh * 0.055)))
+            f.setBold(True)
+            painter.setFont(f)
+            painter.setPen(QColor("#000000"))
+            painter.drawText(QRect(0, ill_y, sw, int(sh * 0.12)),
+                             Qt.AlignHCenter | Qt.AlignTop, "イリュージョン")
+            ill_bottom = ill_y + int(sh * 0.12)
+
+        # 3) 版权行
+        cf = QFont()
+        cf.setPointSize(max(9, int(sh * 0.018)))
+        painter.setFont(cf)
+        painter.setPen(QColor("#4a4a4a"))
+        painter.drawText(QRect(0, ill_bottom + int(sh * 0.04), sw, int(sh * 0.08)),
+                         Qt.AlignHCenter | Qt.AlignTop, APP_COPYRIGHT)
+
+        # 4) 版本号（很小，底部）
+        vf = QFont()
+        vf.setPointSize(max(8, int(sh * 0.015)))
+        painter.setFont(vf)
+        painter.setPen(QColor("#b0b0b0"))
+        painter.drawText(canvas.rect().adjusted(0, 0, 0, -int(sh * 0.025)),
                          Qt.AlignBottom | Qt.AlignHCenter, APP_VER)
         painter.end()
 
         super().__init__(canvas)
         self._closing = False
+        self._audio = None
+        self._audio_ms = 0
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        # 白底不要圆角阴影，避免毛边
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setWindowOpacity(0.0)
 
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        # QSplashScreen 默认会在 showEvent 里把自己居中到主屏；若调用方显式
+        # 指定了几何（覆盖软件窗口区域），则强制应用，避免被自动居中覆盖。
+        if self._explicit_geom is not None:
+            self.setGeometry(self._explicit_geom)
+
+    def attach_audio(self, player, dur_ms=0):
+        """挂启动音 + 其时长（毫秒）；淡入起、放完止，与 logo 同步。"""
+        self._audio = player
+        self._audio_ms = int(dur_ms)
+
     def start(self):
-        """居中显示并开始淡入。"""
-        scr = QApplication.primaryScreen()
-        if scr is not None:
-            geo = scr.availableGeometry()
-            self.move(geo.center().x() - self.width() // 2,
-                      geo.center().y() - self.height() // 2)
+        """显示并开始淡入（位置由调用方 `run()` 设定）。"""
         self.show()
         self.raise_()
+        QTimer.singleShot(self.MAX_WAIT_MS, self._fade_out)
         self._fade_in()
 
     def _fade_in(self):
+        if self._audio is not None:
+            try:
+                self._audio.play()
+            except Exception:
+                pass
         self._anim = QPropertyAnimation(self, b"windowOpacity")
         self._anim.setDuration(self.FADE_MS)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._anim.finished.connect(
-            lambda: QTimer.singleShot(self.HOLD_MS, self._fade_out))
+        self._anim.finished.connect(self._after_fade_in)
         self._anim.start()
+
+    def _after_fade_in(self):
+        base = max(self.HOLD_MS, self._audio_ms)
+        QTimer.singleShot(base + self.AUDIO_TAIL_MS, self._fade_out)
 
     def _fade_out(self):
         if self._closing:
@@ -1666,13 +1731,92 @@ class SplashScreen(QSplashScreen):
         self._anim2.setStartValue(self.windowOpacity())
         self._anim2.setEndValue(0.0)
         self._anim2.setEasingCurve(QEasingCurve.InCubic)
+        if self._audio is not None:
+            try:
+                self._audio.stop()
+            except Exception:
+                pass
         self._anim2.finished.connect(self.close)
         self._anim2.start()
 
     def finish_with(self, main_window):
-        """主窗口就绪后调用：兜底确保动画结束后淡出并关闭。"""
-        QTimer.singleShot(self.FADE_MS + self.HOLD_MS + self.FADE_MS,
-                          self._fade_out)
+        """主窗口就绪后调用：兜底确保动画结束后一定淡出。"""
+        QTimer.singleShot(self.MAX_WAIT_MS, self._fade_out)
+
+
+def _wav_duration_ms(path):
+    """从 WAV 文件头解析真实时长（毫秒）。
+
+    QSoundEffect 不直接暴露时长，这里手动解析 fmt / data 块：
+    时长 = data 字节数 / (采样率 × 声道数 × 位深/8) × 1000。
+    解析失败（非标准 PCM、缺块等）时退回用文件大小粗估，保证不报错。
+    """
+    try:
+        with open(path, "rb") as fh:
+            hdr = fh.read(12)
+            if len(hdr) < 12 or hdr[0:4] != b"RIFF" or hdr[8:12] != b"WAVE":
+                return 0
+            sr = ch = bits = 0
+            data_size = 0
+            while True:
+                chunk = fh.read(8)
+                if len(chunk) < 8:
+                    break
+                cid = chunk[0:4]
+                csize = int.from_bytes(chunk[4:8], "little")
+                body = fh.read(csize)
+                if len(body) < csize:
+                    break
+                if cid == b"fmt " and len(body) >= 16:
+                    fmt = int.from_bytes(body[0:2], "little")
+                    ch = int.from_bytes(body[2:4], "little")
+                    sr = int.from_bytes(body[4:8], "little")
+                    bits = int.from_bytes(body[14:16], "little")
+                elif cid == b"data":
+                    data_size = csize
+        if sr and ch and bits and data_size:
+            return int(data_size * 1000.0 / (sr * ch * bits / 8))
+        # 退回：按文件大小粗估（假设 48k 立体声 16bit）
+        return int(os.path.getsize(path) * 1000.0 / (48000 * 2 * 2))
+    except Exception:
+        return 0
+
+
+def make_splash_audio():
+    """随机挑一段启动音，返回 (QSoundEffect, dur_ms)。无音频时返回 (None, 0)。
+
+    音频放在打包内的 `_splash_audio/` 目录，文件为 WAV（PCM16）。
+    该目录从一个 `manifest.json` 读取白名单（键 `files` 为相对文件名列表）；
+    没有 manifest 时取目录下全部 .wav。游戏原版有「三种启动音随机选一」的逻辑，
+    这里保留同样的行为：每次启动随机取一条。返回的 dur_ms 用于让 logo
+    淡入淡出与音频时长同步（音频更长时，淡出延后到音频播完之后）。
+    """
+    base = res_path("_splash_audio")
+    if not base or not os.path.isdir(base):
+        return (None, 0)
+    files = []
+    man = os.path.join(base, "manifest.json")
+    if os.path.exists(man):
+        try:
+            import json
+            lst = json.load(open(man, encoding="utf-8")).get("files", [])
+            files = [f for f in lst if os.path.exists(os.path.join(base, f))]
+        except Exception:
+            files = []
+    if not files:
+        files = [f for f in os.listdir(base)
+                 if f.lower().endswith(".wav")
+                 and os.path.isfile(os.path.join(base, f))]
+    if not files:
+        return (None, 0)
+    pick = files[QRandomGenerator.global_().bounded(len(files))]
+    picked_path = os.path.join(base, pick)
+    fx = QSoundEffect()
+    fx.setSource(QUrl.fromLocalFile(picked_path))
+    fx.setVolume(0.6)
+    fx.setLoopCount(1)
+    dur_ms = _wav_duration_ms(picked_path)
+    return (fx, dur_ms)
 
 
 def run():
@@ -1696,8 +1840,22 @@ def run():
     app.setStyleSheet("QWidget{background:#1e1e2e;color:#cdd6f4;}"
                       "QToolTip{background:#181825;color:#cdd6f4;"
                       "border:1px solid #45475a;padding:3px;}")
-    # 启动动画（白底 logo + 淡入淡出）
-    splash = SplashScreen()
+    # 启动动画（白底、只覆盖软件窗口区域的 logo + イリュージョン + 版权；
+    # 淡入淡出与随机启动音时长同步）。splash 尺寸与主窗口一致，并居中到主屏，
+    # 使其视觉上恰好盖住软件界面。
+    splash_geom = None
+    scr = app.primaryScreen()
+    if scr is not None:
+        sg = scr.geometry()
+        splash_geom = QRect(
+            sg.x() + (sg.width() - APP_WIN_W) // 2,
+            sg.y() + (sg.height() - APP_WIN_H) // 2,
+            APP_WIN_W, APP_WIN_H,
+        )
+    splash = SplashScreen((APP_WIN_W, APP_WIN_H), geometry=splash_geom)
+    fx, dur_ms = make_splash_audio()
+    if fx is not None:
+        splash.attach_audio(fx, dur_ms)
     splash.start()
     w = MainWindow()
     w.show()
