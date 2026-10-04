@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+#★请把我放到游戏根目录下运行★
+
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Illusion\Rapelay]
+"INSTALLDIR"="E:\\Illusion\\电车之狼R+特典包+去码+中文+真人私出+看图档(带全补丁)\\"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Illusion\BotuPlay]
+"INSTALLDIR"="E:\\Illusion\\电车之狼R+特典包+去码+中文+真人私出+看图档(带全补丁)\\[特典包BotuPlay]"
+"UNINSTALL"="E:\\Illusion\\电车之狼R+特典包+去码+中文+真人私出+看图档(带全补丁)\\[特典包BotuPlay]\\LSUin000.exe"
